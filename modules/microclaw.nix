@@ -179,7 +179,7 @@ let
       ) ic.secrets;
       secretInjects = lib.concatMapStringsSep "\n" (
         s: ''
-          SECRET=$(/bin/cat ${lib.escapeShellArg (toString s.file)}) \
+          SECRET=$(cat ${lib.escapeShellArg (toString s.file)}) \
           ${yqBin} -i '(${s.key}) = strenv(SECRET)' ${lib.escapeShellArg mutableConfigPath}
         ''
       ) ic.secrets;
@@ -253,7 +253,7 @@ let
             if [ ! -s "$pw_file" ]; then
               echo "${unit}: $pw_file missing or empty, keeping the current Web UI password" >&2
             else
-              ${lib.escapeShellArg microclawExe} --config "$cfg_file" web password "$(/bin/cat "$pw_file")"
+              ${lib.escapeShellArg microclawExe} --config "$cfg_file" web password "$(cat "$pw_file")"
             fi
           ''}
 
