@@ -15,6 +15,21 @@ multi-user household deployment:
   flake.
 - **The package is a parameter.** This flake does not pin or build
   MicroClaw itself, and contains zero host-specific information.
+  **Note (2026-10-03):** `pkgs.microclaw` is not in nixpkgs yet — the
+  packaging PR [NixOS/nixpkgs#498144](https://github.com/NixOS/nixpkgs/pull/498144)
+  is still open. To use this today, source the PR branch as a flake input:
+
+  ```nix
+  # flake inputs (a plain nixpkgs branch; don't `follows` your own nixpkgs)
+  nixpkgs-microclaw.url = "github:everettjf/nixpkgs/microclaw-init";
+
+  # then in your config:
+  microclaw.package =
+    inputs.nixpkgs-microclaw.legacyPackages.${system}.microclaw;
+  ```
+
+  Once #498144 merges and reaches your channel, the input disappears and
+  `microclaw.package = pkgs.microclaw;` just works.
 
 ## The three state planes
 

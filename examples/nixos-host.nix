@@ -3,6 +3,15 @@
   passed through to YAML verbatim, so it uses MicroClaw's real (flat) keys.
   Everything deployment-specific (package source, secret files, personas,
   user ids) is supplied by the host - nothing here is baked into the module.
+
+  The MicroClaw package: as of 2026-10-03 the nixpkgs packaging PR
+  (NixOS/nixpkgs#498144) is unmerged, so source the PR branch as an input:
+
+    nixpkgs-microclaw.url = "github:everettjf/nixpkgs/microclaw-init";
+
+  and use inputs.nixpkgs-microclaw.legacyPackages.${system}.microclaw below.
+  Once the PR lands in a channel, replace `pkgs` with your regular nixpkgs
+  and drop the extra input.
 */
 {
   config,
