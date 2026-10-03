@@ -110,7 +110,7 @@ let
         };
 
         stateFiles = lib.mkOption {
-          type = lib.types.attrsOf lib.types.str;
+          type = lib.types.attrsOf (lib.types.oneOf [ lib.types.path lib.types.str ]);
           default = { };
           example = { "groups/telegram/AGENTS.md" = lib.literalExpression "./household-skeleton.md"; };
           description = "Files seeded ONCE into mutable paths via tmpfiles `C` (copy-if-absent; `c` is char-dev, `f` writes the literal argument). Key = path relative to dataDir, value = source path.";
@@ -335,7 +335,7 @@ let
           "d ${ic.dataDir}/groups 0755 ${cfg.user} ${cfg.group} -"
         ]
         ++ lib.mapAttrsToList (
-          dst: src: "C ${ic.dataDir}/${dst} 0644 ${cfg.user} ${cfg.group} - ${src}"
+          dst: src: "C ${ic.dataDir}/${dst} 0644 ${cfg.user} ${cfg.group} - ${toString src}"
         ) ic.stateFiles;
 
       networking.firewall.allowedTCPPorts = ic.firewallTCPPorts;
