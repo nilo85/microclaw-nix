@@ -144,10 +144,11 @@ let
           type = lib.types.attrsOf lib.types.str;
           default = { };
         };
-        openFirewall = lib.mkOption {
-          type = lib.types.bool;
-          default = false;
-          description = "Open config.web.port in the host firewall (web UI binds localhost-only by default; only meaningful if you expose it).";
+        firewallTCPPorts = lib.mkOption {
+          type = lib.types.listOf lib.types.port;
+          default = [ ];
+          description = "Host firewall ports to open. The module does NOT parse the (free-form) config to infer them: if config binds web_host = 0.0.0.0, list the web_port here yourself."
+          ;
         };
       };
     }
@@ -210,9 +211,7 @@ let
         }
       ];
 
-      warnings = lib.optionals (ic.openFirewall && !(ic.config ? web)) [
-        "microclaw-${name}: openFirewall is true but config has no `web` attribute; nothing to open."
-      ];
+      warnings = [ ];
 
       systemd.services.${unit} = {
         description = "MicroClaw agent runtime (${name})";
@@ -339,11 +338,7 @@ let
           dst: src: "C ${ic.dataDir}/${dst} 0644 ${cfg.user} ${cfg.group} - ${src}"
         ) ic.stateFiles;
 
-      networking.firewall.allowedTCPPorts =
-        let
-          webPort = (ic.config.web or { }).port or null;
-        in
-        lib.optionals (ic.openFirewall && webPort != null) [ webPort ];
+      networking.firewall.allowedTCPPorts = ic.firewallTCPPorts;
 
       # Debug/convenience: secret-free render visible on the host.
       environment.etc."microclaw/${name}/microclaw.config.yaml".source = staticConfig;

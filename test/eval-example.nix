@@ -46,7 +46,7 @@ in
       };
       disabledSkills = [ "xlsx" "pptx" ];
       serviceAfter = [ "llama-swap.service" ];
-      openFirewall = true;
+      firewallTCPPorts = [ 10999 ];
       config = {
         llm = {
           default_provider = "litellm";
@@ -98,7 +98,7 @@ in
     }
     {
       assertion = config.networking.firewall.allowedTCPPorts == [ 10999 ];
-      message = "firewall port not opened from config.web.port";
+      message = "explicit firewallTCPPorts not propagated to the host firewall";
     }
     {
       assertion = lib.strings.hasInfix "ProtectSystem" (builtins.toJSON svc.serviceConfig);

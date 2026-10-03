@@ -1,7 +1,8 @@
 /*
-  Example: consuming microclaw-nix from a host flake. Deliberately
-  host-agnostic - everything specific to a deployment (package source,
-  secret files, personas) is passed in.
+  Example: consuming microclaw-nix from a host flake. The config attrset is
+  passed through to YAML verbatim, so it uses MicroClaw's real (flat) keys.
+  Everything deployment-specific (package source, secret files, personas,
+  user ids) is supplied by the host - nothing here is baked into the module.
 */
 {
   config,
@@ -9,33 +10,42 @@
   ...
 }:
 let
-  # A tiny secret-free config for one assistant instance.
   baseConfig = {
-    llm = {
-      default_provider = "litellm";
-      providers.litellm = {
-        base_url = "http://127.0.0.1:4000/v1";
-        model = "agent-small";
-        model_context_window = 65536;
-      };
+    llm_provider = "openai";
+    llm_base_url = "http://127.0.0.1:4000/v1";
+    model = "agent-small";
+    api_key = "sk-local-no-auth"; # required even for local backends
+    llm_providers.openai.models = [ "agent-small" ];
+    model_context_window = 65536;
+    show_thinking = false;
+    max_tokens = 2048;
+    system_prompt_time_detail = "date";
+    control_chat_ids = [ 111111 ];
+
+    web_enabled = true;
+    web_host = "0.0.0.0";
+    web_port = 10962;
+
+    tool_policy = {
+      mode = "block";
+      max_risk = "medium";
+      deny_tools = [ "sync_skills" ];
     };
+    heartbeat = {
+      enabled = false;
+      interval_mins = 45;
+    };
+
     channels.telegram = {
       enabled = true;
-      allow_bots = "none";
-      allowed_user_ids = [ 111111 ]; # host-specific: your user ids
+      allow_groups = true;
+      allowed_user_ids = [ 111111 ];
+      default_account = "assistant";
       accounts.assistant = {
-        soul_path = "/var/lib/microclaw-assistant/souls/assistant/base.md";
-        default = true;
-        allow_chats = [ 111111 ];
+        soul_path = "souls/assistant.md"; # relative to dataDir
+        bot_token = ""; # injected by preStart
+        bot_username = ""; # injected by preStart
       };
-    };
-    web = {
-      enabled = true;
-      port = 10962;
-    };
-    server.heartbeat = {
-      enabled = false;
-      agent_id = "assistant";
     };
   };
 in
@@ -43,19 +53,13 @@ in
   imports = [ microclaw-nix.nixosModules.microclaw ];
 
   microclaw = {
-    # The module does NOT pin MicroClaw itself - provide it however you
-    # like (nixpkgs, your own overlay, a flake input):
-    package = pkgs.microclaw;
+    package = pkgs.microclaw; # provide via nixpkgs/overlay/another flake
 
     instances.assistant = {
       dataDir = "/var/lib/microclaw-assistant";
       config = baseConfig;
 
-      # Plane 1: governance, kernel-read-only, always the Nix version.
       constitution = ./constitution.md;
-
-      # Plane 2: volatile personas/skills, seeded no-clobber, never
-      # overwritten by Nix once present.
       seedDirs = [
         {
           src = ./souls;
@@ -66,15 +70,8 @@ in
           dst = "skills";
         }
       ];
-
-      # Plane 3: shared state skeletons, copy-IF-absent forever after.
       stateFiles."groups/telegram/AGENTS.md" = ./shared/household-skeleton.md;
 
-      # Secrets as FILES - works with any secret manager that drops 0400
-      # files readable by the service user. sops-nix example:
-      #   sops.secrets."telegram/assistant-token" = {
-      #     group = config.microclaw.group; mode = "0440";
-      #   };
       secrets = [
         {
           key = ".channels.telegram.accounts.assistant.bot_token";
@@ -87,15 +84,14 @@ in
       ];
       webPasswordFile = "/run/secrets/microclaw-web-password";
 
-      # Per-instance skill gating (declarative default, merged into
-      # runtime/skills_state.json so agent-side edits survive):
       disabledSkills = [ "xlsx" "pptx" ];
-
+      firewallTCPPorts = [ 10962 ];
       serviceAfter = [ "litellm.service" ];
-      serviceWants = [ "litellm.service" ];
+      extraPath = [ pkgs.git pkgs.curl ];
     };
   };
 
-  # Example of two isolated bots: add a second entry to `instances` with its
-  # own dataDir/config/secrets; each becomes its own microclaw-<name> unit.
+  # A second bot = a second `instances.<name>` entry with its own dataDir,
+  # config, secrets and microclaw-<name> unit. Filesystem isolation, shared
+  # package/user.
 }

@@ -111,7 +111,7 @@ separate personas; one shared package/user. See `examples/nixos-host.nix`.
 | `seedDirs`          | `[{ src dst }]`                   | `[]`                   | `cp -n`; agent-owned afterwards                                  |
 | `stateFiles`        | `{ rel = path }`                  | `{}`                   | tmpfiles `C`: copy-if-absent seeding                             |
 | `disabledSkills`    | `[str]`                           | `[]`                   | merged into `runtime/skills_state.json`, never replaced          |
-| `openFirewall`      | bool                              | `false`                | opens `config.web.port` if set                                   |
+| `firewallTCPPorts`  | `[port]`                          | `[]`                   | opened on the host; the module does not parse your config to infer them |
 | `serviceAfter/Wants/BindsTo` | `[str]`                  | `[]`                   | ordering to your LLM proxy units                                 |
 | `extraPath`         | `[package]`                       | `[]`                   | e.g. `git`, `curl` if the agent can shell out                    |
 
