@@ -98,6 +98,13 @@ Each entry of `microclaw.instances` becomes `microclaw-<name>.service`.
 Multiple bots = multiple entries: separate dataDirs, separate units,
 separate personas; one shared package/user. See `examples/nixos-host.nix`.
 
+**Don't hardcode secret paths.** Ask your secret manager where it actually
+puts the file: with sops-nix, `file = config.sops.secrets.<name>.path;`
+instead of guessing `/run/secrets/<name>` (the module function already
+takes `config`; `config.sops.secrets.<name>.path` is the authoritative
+location and keeps working if sops-nix's layout or your `path` option
+ever changes).
+
 ## Option reference (`microclaw.instances.<name>`)
 
 | option              | type                              | default                | notes                                                            |

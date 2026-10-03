@@ -72,17 +72,20 @@ in
       ];
       stateFiles."groups/telegram/AGENTS.md" = ./shared/household-skeleton.md;
 
+      # Let the secret manager tell you where the decrypted file actually
+      # lives - never hardcode its runtime layout. (sops-nix shown; any
+      # secret manager that exposes a path option works the same way.)
       secrets = [
         {
           key = ".channels.telegram.accounts.assistant.bot_token";
-          file = "/run/secrets/telegram-assistant-token";
+          file = config.sops.secrets.microclaw-assistant-token.path;
         }
         {
           key = ".channels.telegram.accounts.assistant.bot_username";
-          file = "/run/secrets/telegram-assistant-botname";
+          file = config.sops.secrets.microclaw-assistant-botname.path;
         }
       ];
-      webPasswordFile = "/run/secrets/microclaw-web-password";
+      webPasswordFile = config.sops.secrets.microclaw-web-password.path;
 
       disabledSkills = [ "xlsx" "pptx" ];
       firewallTCPPorts = [ 10962 ];
