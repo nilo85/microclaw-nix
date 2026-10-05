@@ -471,6 +471,10 @@ let
 
         path = [
           pkgs.coreutils
+          # `cmp` (preStart globalAgents bind verification) lives in
+          # diffutils, NOT coreutils - omitting it made every unit fail with
+          # "cmp: command not found" and exit 1 before the agent started.
+          pkgs.diffutils
           pkgs.gnugrep
           pkgs.gnused
           pkgs.yq-go

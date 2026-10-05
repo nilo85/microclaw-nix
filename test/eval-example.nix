@@ -159,6 +159,13 @@ in
       message = "explicit firewallTCPPorts not propagated to the host firewall";
     }
     {
+      # preStart uses cmp(1) to verify the globalAgents bind; cmp ships in
+      # diffutils, so it must be on the unit PATH or every unit dies with
+      # "cmp: command not found" before the agent starts.
+      assertion = lib.any (p: lib.strings.hasInfix "diffutils" (toString p)) svc.path;
+      message = "diffutils must be on the unit PATH: preStart uses cmp";
+    }
+    {
       assertion = lib.strings.hasInfix "ProtectSystem" (builtins.toJSON svc.serviceConfig);
       message = "hardening flags missing";
     }
