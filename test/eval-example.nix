@@ -8,7 +8,7 @@
 let
   m = config.microclaw;
   svc = config.systemd.services.microclaw-alice;
-  constitutionFile = ./fixtures/constitution.md;
+  globalAgentsFile = ./fixtures/global-AGENTS.md;
   householdFile = ./fixtures/household.md;
   secretFile = ./fixtures/token.txt;
 in
@@ -32,7 +32,7 @@ in
     package = pkgs.hello; # any derivation; we only check string shapes
     instances.alice = {
       dataDir = "/var/lib/microclaw-alice";
-      constitution = constitutionFile;
+      globalAgents = globalAgentsFile;
       secrets = [ {
         key = ".channels.telegram.accounts.alice.bot_token";
         file = secretFile;
@@ -83,11 +83,11 @@ in
       assertion =
         builtins.length (svc.serviceConfig.BindReadOnlyPaths or [ ]) == 2
         && lib.all (b: builtins.match ".*/fixtures/.*:/var/lib/microclaw-alice/.*" b != null) (svc.serviceConfig.BindReadOnlyPaths or [ ]);
-      message = "expected exactly constitution + readOnlyFiles binds, all store-path sourced: ${toString (svc.serviceConfig.BindReadOnlyPaths or [ ])}";
+      message = "expected exactly globalAgents + readOnlyFiles binds, all store-path sourced: ${toString (svc.serviceConfig.BindReadOnlyPaths or [ ])}";
     }
     {
-      assertion = lib.elem "${toString constitutionFile}:/var/lib/microclaw-alice/groups/AGENTS.md" (svc.serviceConfig.BindReadOnlyPaths or [ ]);
-      message = "constitution bind missing or wrong";
+      assertion = lib.elem "${toString globalAgentsFile}:/var/lib/microclaw-alice/groups/AGENTS.md" (svc.serviceConfig.BindReadOnlyPaths or [ ]);
+      message = "globalAgents bind missing or wrong";
     }
     {
       assertion = lib.elem "${toString householdFile}:/var/lib/microclaw-alice/groups/telegram/AGENTS.md" (svc.serviceConfig.BindReadOnlyPaths or [ ]);

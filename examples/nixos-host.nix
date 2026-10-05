@@ -68,7 +68,7 @@ in
       dataDir = "/var/lib/microclaw-assistant";
       config = baseConfig;
 
-      constitution = ./constitution.md;
+      globalAgents = ./global-AGENTS.md;
       seedDirs = [
         {
           src = ./souls;
@@ -81,7 +81,7 @@ in
       ];
       # AGENTS.md is governance the agent must never rewrite (not even via
       # bash), so it is a read-only bind rather than mutable seeding.
-      readOnlyFiles."groups/telegram/AGENTS.md" = ./shared/household-agents.md;
+      readOnlyFiles."groups/telegram/AGENTS.md" = ./shared/telegram-AGENTS.md;
       stateFiles."groups/telegram/cleaning.md" = ./shared/household-skeleton.md;
 
       # Let the secret manager tell you where the decrypted file actually

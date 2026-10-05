@@ -1,5 +1,5 @@
 {
-  description = "NixOS module for MicroClaw: multi-instance Telegram agent runtime with a kernel-enforced read-only constitution, agent-owned volatile personas, declarative skill gating and file-path-based (secret-manager-agnostic) injection";
+  description = "NixOS module for MicroClaw: multi-instance agent runtime that can pin upstream governance files (AGENTS.md scopes, SOUL.md) as kernel-enforced read-only store mounts, seeds agent-owned soul layers and skills no-clobber, and injects secrets by file path (secret-manager-agnostic)";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -59,7 +59,7 @@
             grep -q "cp -f" "${evidence}"
             grep -q "strenv(SECRET)" "${evidence}"
             grep -q "cp -rn" "${evidence}"
-            grep -q "constitution.md" "${evidence}"
+            grep -q "global-AGENTS.md" "${evidence}"
             grep -q '^C /var/lib/microclaw-alice' "${evidence}" || grep -q "C /var/lib/microclaw-alice/groups/telegram/SOUL.md" "${evidence}"
             # every Nix-owned governance file must be a kernel RO bind
             grep -q "binds: .*groups/telegram/AGENTS.md" "${evidence}"

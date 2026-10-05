@@ -1,15 +1,33 @@
 /*
-  microclaw-nix: reusable NixOS module for MicroClaw agent instances with a
-  hardened three-plane state model:
+  microclaw-nix: reusable NixOS module for MicroClaw agent instances.
 
-    plane 1  constitution  <dataDir>/groups/AGENTS.md  kernel-read-only
-             (BindReadOnlyPaths from the store path), so content is by
-             definition always the Nix version; the agent cannot rewrite its
-             own governance (see microclaw/microclaw#501).
-    plane 2  personality   souls/, skills/, per-chat SOUL.md: seeded
-             no-clobber, agent-owned, NEVER overwritten by Nix afterwards.
-    plane 3  state         bot/chat memory + seeded skeletons (tmpfiles C,
-             copy-if-absent), mutable by the agent.
+  Terminology follows upstream MicroClaw, so a host config reads in the same
+  vocabulary as the engine's own docs. Upstream keeps a memory hierarchy under
+  <dataDir>/groups/, where one file name (AGENTS.md) serves several scopes, and
+  calls AGENTS.md / SOUL.md / USER.md the "governance files" that must not be
+  rewritten by the generic file tools (microclaw/microclaw#501):
+
+    global     groups/AGENTS.md                MemoryManager::global_memory_path
+    bot        groups/<channel>/AGENTS.md      MemoryManager::bot_memory_path
+    chat       groups/<channel>/<id>/AGENTS.md MemoryManager::chat_memory_path
+    user model groups/<channel>/<id>/USER.md   MemoryManager::chat_user_model_path
+    soul       <soul_path>, default SOUL.md in the data dir  (config.soul_path)
+    soul layers <souls_dir>/<name>/*.md        (config.souls_dir)
+
+  This module adds one property on top: Nix can own a governance file outright
+  by bind-mounting the store path read-only, so the live file is always exactly
+  the Nix version even when the agent has an unsandboxed `bash` (which #501 does
+  not cover - it guards write_file / edit_file only).
+
+    globalAgents  store path bind-mounted RO onto <dataDir>/groups/AGENTS.md
+    readOnlyFiles other Nix-owned governance files, RO, same mechanism
+    seedDirs      soul layers and skills, copied no-clobber, then agent-owned
+    stateFiles    mutable scaffolding, seeded copy-if-absent, then agent-owned
+
+  What is deliberately NOT locked down: files that describe the human. A bot
+  should be able to record what it learns about a user from conversation, so
+  seedDirs covers the per-user layer and the per-chat SOUL.md / USER.md stay
+  writable. Only operator-owned governance is pinned to Nix.
 
   The mutable config is reseeded from the Nix render on EVERY start, then
   secrets are injected from FILES (`secrets = [ { key = "<yq path>"; file =
@@ -95,45 +113,90 @@ let
           description = "Optional single-line file re-applying the Web UI password every start (it lives only as a hash in the state db, so rotation takes effect on restart). Missing/empty file => warn and keep current.";
         };
 
-        constitution = lib.mkOption {
+        globalAgents = lib.mkOption {
           type = lib.types.nullOr lib.types.path;
           default = null;
-          example = lib.literalExpression "./constitution.md";
-          description = "Store file bind-mounted READ-ONLY onto <dataDir>/groups/AGENTS.md: writes fail EROFS, unlink fails EBUSY, and the source being a store path keeps the live constitution always identical to the Nix version. Must be NON-EMPTY.";
+          example = lib.literalExpression "./global-AGENTS.md";
+          description = ''
+            Store file bind-mounted read-only onto `<dataDir>/groups/AGENTS.md`,
+            upstream's global memory scope (MemoryManager::global_memory_path).
+
+            Writes fail EROFS and unlink fails EBUSY, and because the mount
+            source is a store path the live file is always exactly the Nix
+            version - including against an unsandboxed `bash`, which
+            microclaw#501 does not guard (it covers write_file / edit_file
+            only). Must be non-empty.
+
+            Prefer this over listing `groups/AGENTS.md` in `readOnlyFiles`: it
+            is the same mount, named after the upstream scope.
+          '';
         };
 
         readOnlyFiles = lib.mkOption {
           type = lib.types.attrsOf (lib.types.oneOf [ lib.types.path lib.types.str ]);
           default = { };
-          example = lib.literalExpression ''{ "groups/telegram/AGENTS.md" = ./groups/telegram/AGENTS.md; }'';
+          example = lib.literalExpression ''{
+            "groups/telegram/AGENTS.md" = ./groups/telegram/AGENTS.md;  # bot scope
+          }'';
           description = ''
-            Files bind-mounted READ-ONLY from the store onto paths relative to
-            dataDir, in the same plane as the constitution: writes fail EROFS
-            and unlink fails EBUSY, so the content is always exactly the Nix
-            version and cannot be rewritten by bash, not just by the file
-            tools (upstream microclaw#501 only guards write_file/edit_file).
-            Targets exist only inside the unit namespace; read them with
+            Governance files bind-mounted read-only from the store, keyed by a
+            path relative to dataDir. Use it for the scopes `globalAgents`
+            does not cover - typically the bot scope
+            (`groups/<channel>/AGENTS.md`) in a multi-user deployment, where
+            one user's conversation must not be able to edit shared
+            governance.
+
+            Same enforcement as `globalAgents`: writes fail EROFS, unlink
+            fails EBUSY, and the live file is always exactly the Nix version
+            even against an unsandboxed `bash` (microclaw#501 guards only
+            write_file / edit_file). Targets exist only inside the unit
+            namespace; read one with
               nsenter -t $(systemctl show -p MainPID --value <unit>) -m cat <target>
 
-            This is the stricter counterpart of `stateFiles`: pick `stateFiles`
-            for copy-if-absent mutable scaffolding, `readOnlyFiles` when the
-            file is governance that must stay Nix-owned. Declaring the same
-            relative path in both is an error.
+            Do NOT use this for files describing a human. A bot should be able
+            to record what it learns about a user, so `seedDirs` (soul layers)
+            and `stateFiles` (per-chat USER.md scaffolding) stay writable.
+            Declaring the same relative path in both `readOnlyFiles` and
+            `stateFiles` is an error.
           '';
         };
 
         seedDirs = lib.mkOption {
           type = lib.types.listOf seedSubmodule;
           default = [ ];
-          example = [ { src = ./souls; dst = "souls"; } ];
-          description = "Directories copied with `cp -rn` (no-clobber) every start; existing files are never overwritten - volatile agent data. Copies are chmod'd writable so agent self-learning keeps working (store modes are read-only).";
+          example = [
+            {
+              src = ./souls;
+              dst = "souls";
+            } # config.souls_dir
+          ];
+          description = ''
+            Directories copied with `cp -rn` (no-clobber) every start; existing
+            files are never overwritten, so this is seeding, not management.
+            Copies are chmod'd writable because the store modes are read-only -
+            these are the agent's own files afterwards.
+
+            Use it for `souls_dir` layers (the base persona and per-user
+            layers) and for `skills/`. The per-user layer belongs here rather
+            than in `readOnlyFiles`: a bot should be able to record what it
+            learns about a user from conversation.
+          '';
         };
 
         stateFiles = lib.mkOption {
           type = lib.types.attrsOf (lib.types.oneOf [ lib.types.path lib.types.str ]);
           default = { };
           example = { "groups/telegram/AGENTS.md" = lib.literalExpression "./household-skeleton.md"; };
-          description = "Files seeded ONCE into mutable paths via tmpfiles `C` (copy-if-absent; `c` is char-dev, `f` writes the literal argument). Key = path relative to dataDir, value = source path.";
+          description = ''
+            Files seeded once into mutable paths via tmpfiles `C`
+            (copy-if-absent). Key = path relative to dataDir, value = source.
+
+            This is for shared memory the agent is meant to maintain - e.g. the
+            bot-scope `groups/<channel>/AGENTS.md` when the bot rewrites the
+            file as its notes change. If the content must never be edited by
+            the agent, declare it in `readOnlyFiles` instead; a path may not be
+            in both.
+          '';
         };
 
         disabledSkills = lib.mkOption {
@@ -188,7 +251,7 @@ let
         }
         // ic.config
       );
-      constitutionTarget = "${ic.dataDir}/groups/AGENTS.md";
+      globalAgentsTarget = "${ic.dataDir}/groups/AGENTS.md";
       # Every ancestor directory of a dataDir-relative path, excluding the
       # file itself ("groups/telegram/AGENTS.md" -> "groups",
       # "groups/telegram").
@@ -281,9 +344,9 @@ let
 
           # Fail BEFORE writing anything: empty secret = broken forever.
           ${secretEmptyCheck}
-          ${lib.optionalString (ic.constitution != null) ''
-            if [ ! -s ${lib.escapeShellArg (toString ic.constitution)} ]; then
-              echo "${unit}: constitution file is empty; governance plane must not be blank" >&2
+          ${lib.optionalString (ic.globalAgents != null) ''
+            if [ ! -s ${lib.escapeShellArg (toString ic.globalAgents)} ]; then
+              echo "${unit}: globalAgents is empty; the global governance scope must not be blank" >&2
               exit 1
             fi
           ''}
@@ -315,7 +378,7 @@ let
           # volatile data must survive restarts.
           ${seedDirCmds}
 
-          # Declarative per-instance skill gating (plane-3-adjacent: merged,
+          # Declarative per-instance skill gating (merged,
           # not replaced, so agent-managed entries keep self-governing).
           skills_state=${lib.escapeShellArg "${ic.dataDir}/runtime/skills_state.json"}
           mkdir -p "$(dirname "$skills_state")"
@@ -355,20 +418,24 @@ let
         // lib.optionalAttrs (!cfg.createAccounts) {
           DynamicUser = true;
         }
-        // lib.optionalAttrs (ic.constitution != null) {
-          # Plane 1, kernel-enforced: read-only inside the unit namespace,
-          # unlink => EBUSY. The mount source IS the store path, so the live
-          # constitution is always exactly the Nix version. Note: the bind
-          # target exists only inside the unit namespace - on the host,
-          # dataDir/groups/AGENTS.md is absent; read it with
-          #   nsenter -t $(systemctl show -p MainPID --value ${unit}) -m \
-          #     cat ${constitutionTarget}
-          # Note: the two bind lists are concatenated here instead of being two
-          # attribute sets, because `//` overwrites. lib.mkIf is not usable
-          # in this position either - the whole attrset is a single module
-          # definition, so only optionalAttrs is honoured.
+# Kernel-enforced read-only governance: writes fail EROFS, unlink
+        # fails EBUSY, and the mount source is the store path, so the live
+        # file is always exactly the Nix version - including against an
+        # unsandboxed `bash`, which microclaw#501 does not guard. Targets
+        # exist only inside the unit namespace; on the host
+        # <dataDir>/groups/AGENTS.md is absent. Read one with
+        #   nsenter -t $(systemctl show -p MainPID --value ${unit>) -m \
+        #     cat <target>
+        #
+        # The bind lists are concatenated rather than being two attribute sets
+        # because `//` overwrites. lib.mkIf is unusable here too - the whole
+        # attrset is a single module definition, so only optionalAttrs is
+        # honoured.
+        // lib.optionalAttrs ((ic.globalAgents != null) || (ic.readOnlyFiles != { })) {
           BindReadOnlyPaths =
-            [ "${toString ic.constitution}:${constitutionTarget}" ]
+            lib.optionals (ic.globalAgents != null) [
+              "${toString ic.globalAgents}:${globalAgentsTarget}"
+            ]
             ++ lib.mapAttrsToList (
               dst: src: "${toString src}:${ic.dataDir}/${dst}"
             ) ic.readOnlyFiles;
@@ -378,7 +445,7 @@ let
         # is a symlink), so trigger explicitly.
         restartTriggers =
           [ staticConfig ]
-          ++ lib.optionals (ic.constitution != null) [ ic.constitution ]
+          ++ lib.optionals (ic.globalAgents != null) [ ic.globalAgents ]
           ++ lib.mapAttrsToList (dst: src: src) ic.readOnlyFiles;
 
         path = [

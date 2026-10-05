@@ -31,27 +31,55 @@ multi-user household deployment:
   Once #498144 merges and reaches your channel, the input disappears and
   `microclaw.package = pkgs.microclaw;` just works.
 
-## The three state planes
+## Upstream terminology
 
-| plane         | file(s)                                   | semantics                                                                 |
-| ------------- | ----------------------------------------- | ------------------------------------------------------------------------- |
-| constitution  | `<dataDir>/groups/AGENTS.md`              | kernel-read-only bind from a **store path**: writes fail `EROFS`, unlink `EBUSY`, content is always exactly the Nix version |
-| personality   | `souls/`, `skills/`, per-chat `SOUL.md`   | seeded `cp -n` (no-clobber); agent-owned volatile data; **never overwritten by Nix once present** |
-| state         | `groups/<channel>/AGENTS.md`, chat memory | seeded once via tmpfiles `C` (copy-if-absent); fully mutable afterwards   |
+This module uses MicroClaw's own vocabulary, so a host config reads the same
+way as the engine's docs. Upstream keeps a memory hierarchy under
+`<dataDir>/groups/`, where the single file name `AGENTS.md` serves several
+scopes (`MemoryManager` in
+`crates/microclaw-engine/src/internal/storage/memory.rs`):
 
-Why a kernel lock for the constitution? MicroClaw's own file tools bypass
-its `write_memory` scope gates and happily rewrite governance files
-([microclaw/microclaw#501](https://github.com/microclaw/microclaw/issues/501)).
-`BindReadOnlyPaths` fixes this at the mount layer: an agent cannot rewrite
-the rules it is governed by, and a NixOS switch is the only update path.
-Consequence: the bind target exists only inside the unit's mount
-namespace; on the host, `<dataDir>/groups/AGENTS.md` is absent. Read it
-with:
+| scope      | path                                       | upstream fn                 |
+| ---------- | ------------------------------------------ | --------------------------- |
+| global     | `groups/AGENTS.md`                         | `global_memory_path`        |
+| bot        | `groups/<channel>/AGENTS.md`                | `bot_memory_path`           |
+| chat       | `groups/<channel>/<chat_id>/AGENTS.md`      | `chat_memory_path`          |
+| user model | `groups/<channel>/<chat_id>/USER.md`        | `chat_user_model_path`      |
+| soul       | `<config.soul_path>`, default `SOUL.md` in the data dir | `config.soul_path` |
+| soul layers| `<config.souls_dir>/<layer>/*.md`           | `config.souls_dir`          |
+
+Upstream calls `AGENTS.md`, `SOUL.md` and `USER.md` the **governance files**
+and refuses to let the generic file tools rewrite them
+([#501](https://github.com/microclaw/microclaw/issues/501),
+`GOVERNANCE_FILE_NAMES` in `internal/tool_runtime/path_guard.rs`).
+
+| option           | file(s)                                  | semantics                                                                 |
+| ---------------- | ---------------------------------------- | ------------------------------------------------------------------------- |
+| `globalAgents`   | `<dataDir>/groups/AGENTS.md`             | kernel-read-only bind from a **store path**: writes fail `EROFS`, unlink `EBUSY`, content is always exactly the Nix version |
+| `readOnlyFiles`  | any governance file, e.g. `groups/<channel>/AGENTS.md` | same mechanism, for the scopes `globalAgents` does not cover |
+| `seedDirs`       | `souls/`, `skills/`                      | seeded `cp -n` (no-clobber); agent-owned volatile data; **never overwritten by Nix once present** |
+| `stateFiles`     | bot-scope `AGENTS.md`, per-chat scaffolding | seeded once via tmpfiles `C` (copy-if-absent); fully mutable afterwards   |
+
+Why a kernel lock? #501 blocks `write_file` / `edit_file` only — its own
+changelog notes that "`bash` without the sandbox still runs as the service
+user". `BindReadOnlyPaths` closes that at the mount layer, so governance
+content is identical to the Nix version by construction and a NixOS switch is
+the only update path. Consequence: the bind target exists only inside the
+unit's mount namespace; on the host, `<dataDir>/groups/AGENTS.md` is absent.
+Read it with:
 
 ```sh
 nsenter -t $(systemctl show -p MainPID --value microclaw-<name>) -m \
   cat /var/lib/microclaw-<name>/groups/AGENTS.md
 ```
+
+What is deliberately **not** locked: files describing a human. A bot should
+be able to record what it learns about a user from conversation, so
+`seedDirs` covers the per-user soul layer and per-chat `SOUL.md` / `USER.md`
+stay writable. Locking those would make you edit Nix and rebuild for a fact
+the bot just learned from you. In a multi-user deployment the thing to pin is
+the shared bot-scope `AGENTS.md`, via `readOnlyFiles`, so one user's
+conversation cannot edit governance the others read.
 
 ## Usage
 
@@ -80,7 +108,7 @@ nsenter -t $(systemctl show -p MainPID --value microclaw-<name>) -m \
 
   microclaw.instances.assistant = {
     dataDir = "/var/lib/microclaw-assistant";
-    constitution = ./constitution.md;
+    globalAgents = ./global-AGENTS.md;
 
     config = {
       llm = { ... };                      # your provider/model block
@@ -130,11 +158,11 @@ ever changes).
 | `dataDir`           | str                               | -                      | must be under `/var/lib` (systemd `StateDirectory`)              |
 | `workingDir`        | str                               | `/srv/microclaw-<name>` | seeded via tmpfiles                                             |
 | `config`            | attrs                             | `{}`                   | secret-free config; `data_dir`/`working_dir` injected if absent   |
-| `constitution`      | null or path                      | `null`                 | bind-mounted read-only onto `<dataDir>/groups/AGENTS.md`          |
+| `globalAgents`      | null or path                      | `null`                 | bind-mounted read-only onto `<dataDir>/groups/AGENTS.md` (global scope) |
 | `secrets`           | `[{ key file }]`                  | `[]`                   | `key` = yq path into the mutable config; empty file ⇒ unit fails |
 | `webPasswordFile`   | null or path                      | `null`                 | re-applied every start (hash lives in the state db)              |
 | `seedDirs`          | `[{ src dst }]`                   | `[]`                   | `cp -n`; agent-owned afterwards                                  |
-| `readOnlyFiles`     | `{ rel = path }`                  | `{}`                   | bind-mounted read-only (same plane as `constitution`); a path may not be in `stateFiles` too |
+| `readOnlyFiles`     | `{ rel = path }`                  | `{}`                   | kernel read-only bind for other governance scopes; a path may not be in `stateFiles` too |
 | `stateFiles`        | `{ rel = path }`                  | `{}`                   | tmpfiles `C`: copy-if-absent seeding                             |
 | `disabledSkills`    | `[str]`                           | `[]`                   | merged into `runtime/skills_state.json`, never replaced          |
 | `firewallTCPPorts`  | `[port]`                          | `[]`                   | opened on the host; the module does not parse your config to infer them |
@@ -150,8 +178,8 @@ Top level: `microclaw.package` (required with instances), `binaryName`,
 - Hardening is strong but not paranoid-grade: `ProtectSystem=full`,
   `PrivateTmp`, `NoNewPrivileges`, etc., yet the unit reaches the network
   and any HTTP-reachable model endpoint. Re-evaluate if MicroClaw gains
-  exec/shell tools; the bind-mounted constitution is the one guarantee the
-  agent cannot break by itself.
+  exec/shell tools; the bind-mounted governance files are the one guarantee
+  the agent cannot break by itself.
 - `lib.mkIf`-style conditions in `preStart` fail fast: an empty secret file
   blocks the unit *before* the config is seeded, so a rotation miss cannot
   produce a silently broken bot.
