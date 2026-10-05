@@ -236,6 +236,20 @@ let
           assertion = ic.config != { };
           message = "microclaw-${name}: config attrset is empty";
         }
+        (
+          let
+            overlap = lib.filter (n: ic.stateFiles ? ${n}) (lib.attrNames ic.readOnlyFiles);
+          in
+          {
+            assertion = overlap == [ ];
+            message = ''
+              microclaw-${name}: declared both readOnlyFiles and stateFiles,
+              which cannot both hold: ${lib.concatStringsSep ", " overlap}.
+              Use readOnlyFiles for Nix-owned governance (kernel read-only bind),
+              stateFiles for copy-if-absent mutable scaffolding.
+            '';
+          }
+        )
       ];
 
       warnings = [ ];
@@ -254,20 +268,6 @@ let
           RUST_LOG = "info";
           SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
         } // ic.env;
-
-        assertions = let
-          overlap = lib.filter (n: ic.stateFiles ? ${n}) (lib.attrNames ic.readOnlyFiles);
-        in [
-          {
-            assertion = overlap == [ ];
-            message = ''
-              microclaw.${name}: these paths are declared both readOnlyFiles and
-              stateFiles, which cannot both hold: ${lib.concatStringsSep ", " overlap}.
-              Use readOnlyFiles for Nix-owned governance, stateFiles for
-              copy-if-absent mutable scaffolding.
-            '';
-          }
-        ];
 
         # The mutable config is NIX-OWNED: always reseed from the rendered
         # store file, then inject secrets from files. (Seed-only-when-absent

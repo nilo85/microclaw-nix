@@ -109,8 +109,10 @@ in
       message = "a read-only file must never also be seeded copy-if-absent";
     }
     {
-      assertion = lib.all (a: !a.assertion) (svc.assertions or [ ]) == false;
-      message = "sanity: the RO/stateFiles conflict assertion must be reachable";
+      # The RO/stateFiles conflict must be detectable at all; flake.nix
+      # separately proves it fires for a conflicting config.
+      assertion = lib.any (a: lib.hasInfix "declared both readOnlyFiles and stateFiles" a.message) config.assertions;
+      message = "the readOnlyFiles/stateFiles conflict assertion is missing";
     }
     {
       assertion =
