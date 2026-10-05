@@ -102,6 +102,26 @@ let
           description = "Store file bind-mounted READ-ONLY onto <dataDir>/groups/AGENTS.md: writes fail EROFS, unlink fails EBUSY, and the source being a store path keeps the live constitution always identical to the Nix version. Must be NON-EMPTY.";
         };
 
+        readOnlyFiles = lib.mkOption {
+          type = lib.types.attrsOf (lib.types.oneOf [ lib.types.path lib.types.str ]);
+          default = { };
+          example = lib.literalExpression ''{ "groups/telegram/AGENTS.md" = ./groups/telegram/AGENTS.md; }'';
+          description = ''
+            Files bind-mounted READ-ONLY from the store onto paths relative to
+            dataDir, in the same plane as the constitution: writes fail EROFS
+            and unlink fails EBUSY, so the content is always exactly the Nix
+            version and cannot be rewritten by bash, not just by the file
+            tools (upstream microclaw#501 only guards write_file/edit_file).
+            Targets exist only inside the unit namespace; read them with
+              nsenter -t $(systemctl show -p MainPID --value <unit>) -m cat <target>
+
+            This is the stricter counterpart of `stateFiles`: pick `stateFiles`
+            for copy-if-absent mutable scaffolding, `readOnlyFiles` when the
+            file is governance that must stay Nix-owned. Declaring the same
+            relative path in both is an error.
+          '';
+        };
+
         seedDirs = lib.mkOption {
           type = lib.types.listOf seedSubmodule;
           default = [ ];
@@ -169,6 +189,13 @@ let
         // ic.config
       );
       constitutionTarget = "${ic.dataDir}/groups/AGENTS.md";
+      # Every ancestor directory of a dataDir-relative path, excluding the
+      # file itself ("groups/telegram/AGENTS.md" -> "groups",
+      # "groups/telegram").
+      parentsOf =
+        rel: let
+          dirs = lib.init (lib.splitString "/" rel);
+        in map (i: lib.concatStringsSep "/" (lib.take i dirs)) (lib.range 1 (builtins.length dirs));
       secretEmptyCheck = lib.concatMapStringsSep "\n" (
         s: ''
           if [ ! -s ${lib.escapeShellArg (toString s.file)} ]; then
@@ -228,6 +255,20 @@ let
           SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
         } // ic.env;
 
+        assertions = let
+          overlap = lib.filter (n: ic.stateFiles ? ${n}) (lib.attrNames ic.readOnlyFiles);
+        in [
+          {
+            assertion = overlap == [ ];
+            message = ''
+              microclaw.${name}: these paths are declared both readOnlyFiles and
+              stateFiles, which cannot both hold: ${lib.concatStringsSep ", " overlap}.
+              Use readOnlyFiles for Nix-owned governance, stateFiles for
+              copy-if-absent mutable scaffolding.
+            '';
+          }
+        ];
+
         # The mutable config is NIX-OWNED: always reseed from the rendered
         # store file, then inject secrets from files. (Seed-only-when-absent
         # previously let stale config - including tool policy - survive
@@ -245,6 +286,19 @@ let
               echo "${unit}: constitution file is empty; governance plane must not be blank" >&2
               exit 1
             fi
+          ''}
+          ${lib.optionalString (ic.readOnlyFiles != { }) ''
+            ${lib.concatStringsSep "\n" (
+              lib.mapAttrsToList (
+                dst: src:
+                  ''
+                  if [ ! -s ${lib.escapeShellArg (toString src)} ]; then
+                    echo "${unit}: read-only governance file ${dst} is empty" >&2
+                    exit 1
+                  fi
+                ''
+              ) ic.readOnlyFiles
+            )}
           ''}
           ${secretInjects}
 
@@ -309,14 +363,23 @@ let
           # dataDir/groups/AGENTS.md is absent; read it with
           #   nsenter -t $(systemctl show -p MainPID --value ${unit}) -m \
           #     cat ${constitutionTarget}
-          BindReadOnlyPaths = [ "${toString ic.constitution}:${constitutionTarget}" ];
+          # Note: the two bind lists are concatenated here instead of being two
+          # attribute sets, because `//` overwrites. lib.mkIf is not usable
+          # in this position either - the whole attrset is a single module
+          # definition, so only optionalAttrs is honoured.
+          BindReadOnlyPaths =
+            [ "${toString ic.constitution}:${constitutionTarget}" ]
+            ++ lib.mapAttrsToList (
+              dst: src: "${toString src}:${ic.dataDir}/${dst}"
+            ) ic.readOnlyFiles;
         };
 
         # A store-content change alone would not restart the unit (the config
         # is a symlink), so trigger explicitly.
         restartTriggers =
           [ staticConfig ]
-          ++ lib.optionals (ic.constitution != null) [ ic.constitution ];
+          ++ lib.optionals (ic.constitution != null) [ ic.constitution ]
+          ++ lib.mapAttrsToList (dst: src: src) ic.readOnlyFiles;
 
         path = [
           pkgs.coreutils
@@ -336,7 +399,14 @@ let
         ]
         ++ lib.mapAttrsToList (
           dst: src: "C ${ic.dataDir}/${dst} 0644 ${cfg.user} ${cfg.group} - ${toString src}"
-        ) ic.stateFiles;
+        ) ic.stateFiles
+        # systemd creates missing bind-mount destinations itself, but as
+        # root-owned 0755. Pre-create every parent directory of a read-only
+        # file as the service user instead, so the agent can still add
+        # siblings next to a governance file it may not modify.
+        ++ map (d: "d ${ic.dataDir}/${d} 0755 ${cfg.user} ${cfg.group} -") (
+          lib.unique (lib.flatten (lib.mapAttrsToList (dst: _: parentsOf dst) ic.readOnlyFiles))
+        );
 
       networking.firewall.allowedTCPPorts = ic.firewallTCPPorts;
 

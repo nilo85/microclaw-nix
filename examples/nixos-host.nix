@@ -79,7 +79,10 @@ in
           dst = "skills";
         }
       ];
-      stateFiles."groups/telegram/AGENTS.md" = ./shared/household-skeleton.md;
+      # AGENTS.md is governance the agent must never rewrite (not even via
+      # bash), so it is a read-only bind rather than mutable seeding.
+      readOnlyFiles."groups/telegram/AGENTS.md" = ./shared/household-agents.md;
+      stateFiles."groups/telegram/cleaning.md" = ./shared/household-skeleton.md;
 
       # Let the secret manager tell you where the decrypted file actually
       # lives - never hardcode its runtime layout. (sops-nix shown; any

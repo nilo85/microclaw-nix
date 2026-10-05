@@ -9,6 +9,7 @@ let
   m = config.microclaw;
   svc = config.systemd.services.microclaw-alice;
   constitutionFile = ./fixtures/constitution.md;
+  householdFile = ./fixtures/household.md;
   secretFile = ./fixtures/token.txt;
 in
 {
@@ -41,7 +42,12 @@ in
         src = ./fixtures/souls;
         dst = "souls";
       } ];
+      # Deliberately NOT the same paths as readOnlyFiles: a path may be one
+      # or the other, never both (enforced by a per-instance assertion).
       stateFiles = {
+        "groups/telegram/SOUL.md" = toString ./fixtures/household.md;
+      };
+      readOnlyFiles = {
         "groups/telegram/AGENTS.md" = toString ./fixtures/household.md;
       };
       disabledSkills = [ "xlsx" "pptx" ];
@@ -74,14 +80,37 @@ in
       message = "instance not merged";
     }
     {
-      assertion = svc.serviceConfig.BindReadOnlyPaths == [
-        "${toString constitutionFile}:/var/lib/microclaw-alice/groups/AGENTS.md"
-      ];
-      message = "constitution bind missing or wrong: ${toString (svc.serviceConfig.BindReadOnlyPaths or [ ])}";
+      assertion =
+        builtins.length (svc.serviceConfig.BindReadOnlyPaths or [ ]) == 2
+        && lib.all (b: builtins.match ".*/fixtures/.*:/var/lib/microclaw-alice/.*" b != null) (svc.serviceConfig.BindReadOnlyPaths or [ ]);
+      message = "expected exactly constitution + readOnlyFiles binds, all store-path sourced: ${toString (svc.serviceConfig.BindReadOnlyPaths or [ ])}";
     }
     {
-      assertion = lib.any (l: lib.hasPrefix "C /var/lib/microclaw-alice/groups/telegram/AGENTS.md" l) config.systemd.tmpfiles.rules;
+      assertion = lib.elem "${toString constitutionFile}:/var/lib/microclaw-alice/groups/AGENTS.md" (svc.serviceConfig.BindReadOnlyPaths or [ ]);
+      message = "constitution bind missing or wrong";
+    }
+    {
+      assertion = lib.elem "${toString householdFile}:/var/lib/microclaw-alice/groups/telegram/AGENTS.md" (svc.serviceConfig.BindReadOnlyPaths or [ ]);
+      message = "readOnlyFiles bind missing or wrong";
+    }
+    {
+      assertion = lib.any (l: lib.hasPrefix "C /var/lib/microclaw-alice/groups/telegram/SOUL.md" l) config.systemd.tmpfiles.rules;
       message = "tmpfiles C seed rule missing";
+    }
+    {
+      # systemd would create the bind destination itself, but root-owned; the
+      # service user needs the parent to stay writable for siblings.
+      assertion =
+        lib.any (l: lib.hasPrefix "d /var/lib/microclaw-alice/groups/telegram 0755 " l) config.systemd.tmpfiles.rules;
+      message = "parent dir of a read-only file must be pre-created for the service user";
+    }
+    {
+      assertion = !lib.elem "C /var/lib/microclaw-alice/groups/telegram/AGENTS.md" config.systemd.tmpfiles.rules;
+      message = "a read-only file must never also be seeded copy-if-absent";
+    }
+    {
+      assertion = lib.all (a: !a.assertion) (svc.assertions or [ ]) == false;
+      message = "sanity: the RO/stateFiles conflict assertion must be reachable";
     }
     {
       assertion =

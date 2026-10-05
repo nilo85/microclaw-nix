@@ -103,7 +103,10 @@ nsenter -t $(systemctl show -p MainPID --value microclaw-<name>) -m \
     ];
 
     seedDirs   = [ { src = ./souls; dst = "souls"; } ];
-    stateFiles = { "groups/telegram/AGENTS.md" = ./shared-state-skeleton.md; };
+    # Nix-owned governance: kernel-read-only, cannot be rewritten even by bash
+    readOnlyFiles = { "groups/telegram/AGENTS.md" = ./groups/telegram/AGENTS.md; };
+    # Mutable scaffolding: seeded once, then the agent owns it
+    stateFiles   = { "groups/telegram/cleaning.md" = ./shared-skeleton.md; };
     disabledSkills = [ "xlsx" ];          # per-instance gating
   };
 }
@@ -131,6 +134,7 @@ ever changes).
 | `secrets`           | `[{ key file }]`                  | `[]`                   | `key` = yq path into the mutable config; empty file ⇒ unit fails |
 | `webPasswordFile`   | null or path                      | `null`                 | re-applied every start (hash lives in the state db)              |
 | `seedDirs`          | `[{ src dst }]`                   | `[]`                   | `cp -n`; agent-owned afterwards                                  |
+| `readOnlyFiles`     | `{ rel = path }`                  | `{}`                   | bind-mounted read-only (same plane as `constitution`); a path may not be in `stateFiles` too |
 | `stateFiles`        | `{ rel = path }`                  | `{}`                   | tmpfiles `C`: copy-if-absent seeding                             |
 | `disabledSkills`    | `[str]`                           | `[]`                   | merged into `runtime/skills_state.json`, never replaced          |
 | `firewallTCPPorts`  | `[port]`                          | `[]`                   | opened on the host; the module does not parse your config to infer them |

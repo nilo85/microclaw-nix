@@ -60,7 +60,10 @@
             grep -q "strenv(SECRET)" "${evidence}"
             grep -q "cp -rn" "${evidence}"
             grep -q "constitution.md" "${evidence}"
-            grep -q '^C /var/lib/microclaw-alice' "${evidence}" || grep -q "C /var/lib/microclaw-alice/groups/telegram/AGENTS.md" "${evidence}"
+            grep -q '^C /var/lib/microclaw-alice' "${evidence}" || grep -q "C /var/lib/microclaw-alice/groups/telegram/SOUL.md" "${evidence}"
+            # every Nix-owned governance file must be a kernel RO bind
+            grep -q "binds: .*groups/telegram/AGENTS.md" "${evidence}"
+            grep -q "tmpfiles: .*d /var/lib/microclaw-alice/groups/telegram 0755" "${evidence}"
             echo ok > "$out"
           '';
       });
