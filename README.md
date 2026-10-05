@@ -187,6 +187,17 @@ Top level: `microclaw.package` (required with instances), `binaryName`,
   assignment (module-system self-cycle; `nix flake check` covers this).
 - tmpfiles seeding uses the static user; with `createAccounts = false`
   (DynamicUser) adjust ownership expectations for `stateFiles`.
+- `systemd.tmpfiles.rules` are only applied on boot and on
+  `systemd-tmpfiles-setup.service`, which the generated units do not
+  `After=`. A unit can therefore start before its `d` rules have run on a
+  given boot, which is why every bind destination is also safe to create by
+  systemd itself and why the parent directories are additionally pre-created
+  here as the service user.
+- `globalAgents` and `readOnlyFiles` destinations exist on the *host* as
+  0-byte root-owned mountpoints (systemd creates them). Their host-side
+  content is meaningless; the real file only exists inside the unit mount
+  namespace. `preStart` fails the unit if a destination holds content that
+  differs from its Nix source, since that means the bind is not in effect.
 
 ## Development
 

@@ -72,6 +72,20 @@ in
         };
       };
     };
+
+    # Deliberately has NO readOnlyFiles, so <dataDir>/groups can only be
+    # pre-created by the globalAgents parent loop. See the bob assertion.
+    instances.bob = {
+      dataDir = "/var/lib/microclaw-bob";
+      globalAgents = globalAgentsFile;
+      config = {
+        llm.default_provider = "litellm";
+        channels.telegram = {
+          enabled = true;
+          accounts.bot = { bot_token = "x"; };
+        };
+      };
+    };
   };
 
   config.assertions = [
@@ -107,6 +121,19 @@ in
     {
       assertion = !lib.elem "C /var/lib/microclaw-alice/groups/telegram/AGENTS.md" config.systemd.tmpfiles.rules;
       message = "a read-only file must never also be seeded copy-if-absent";
+    }
+    {
+      # Regression: globalAgents is bound separately from readOnlyFiles, so a
+      # loop over readOnlyFiles alone misses its parent dir.
+      #
+      # This must be asserted on an instance whose readOnlyFiles does NOT
+      # happen to contain a path under the same parent. alice has
+      # "groups/telegram/AGENTS.md", whose parentsOf is ["groups" ...] - the
+      # same "groups" dir globalAgents needs - so her rule list can satisfy
+      # this either way. bob has globalAgents and NO readOnlyFiles, so
+      # <dataDir>/groups can only come from the globalAgents parent loop.
+      assertion = lib.elem "d /var/lib/microclaw-bob/groups 0755 ${m.user} ${m.group} -" config.systemd.tmpfiles.rules;
+      message = "globalAgents parent dir must be pre-created for the service user even with no readOnlyFiles";
     }
     {
       # The RO/stateFiles conflict must be detectable at all; flake.nix

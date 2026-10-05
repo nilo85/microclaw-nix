@@ -349,6 +349,18 @@ let
               echo "${unit}: globalAgents is empty; the global governance scope must not be blank" >&2
               exit 1
             fi
+            # Reachable when systemd auto-created the destination, or when a
+            # previous config seeded real content there. If this file is
+            # non-empty AND differs from the Nix source, the bind is not
+            # taking effect and the agent would silently read stale content
+            # instead of the reviewed governance file. Fail loudly rather
+            # than run on the wrong policy.
+            _ga_target=${lib.escapeShellArg globalAgentsTarget}
+            if [ -e "$_ga_target" ] && ! cmp -s "$_ga_target" ${lib.escapeShellArg (toString ic.globalAgents)}; then
+              echo "${unit}: globalAgents target has content differing from the Nix source;" >&2
+              echo "${unit}: the read-only bind is not in effect, so the agent would read stale governance." >&2
+              exit 1
+            fi
           ''}
           ${lib.optionalString (ic.readOnlyFiles != { }) ''
             ${lib.concatStringsSep "\n" (
@@ -421,11 +433,20 @@ let
 # Kernel-enforced read-only governance: writes fail EROFS, unlink
         # fails EBUSY, and the mount source is the store path, so the live
         # file is always exactly the Nix version - including against an
-        # unsandboxed `bash`, which microclaw#501 does not guard. Targets
-        # exist only inside the unit namespace; on the host
-        # <dataDir>/groups/AGENTS.md is absent. Read one with
-        #   nsenter -t $(systemctl show -p MainPID --value ${unit>) -m \
+        # unsandboxed `bash`, which microclaw#501 does not guard.
+        #
+        # NOTE on the target existing on the host: systemd creates a missing
+        # bind destination itself, as a 0-byte root-owned placeholder. So
+        # <dataDir>/groups/AGENTS.md normally DOES exist on the host as an
+        # empty mountpoint and its content there is meaningless - it is
+        # shadowed by the bind inside the unit's mount namespace. Read the
+        # effective file with
+        #   nsenter -t $(systemctl show -p MainPID --value ${unit}) -m \
         #     cat <target>
+        # A non-empty host-side file is the anomaly worth investigating, not
+        # an empty one; preStart below treats a stale non-empty host target
+        # as a hard error, since it means the bind is not in effect and the
+        # agent would read pre-governance content instead.
         #
         # The bind lists are concatenated rather than being two attribute sets
         # because `//` overwrites. lib.mkIf is unusable here too - the whole
@@ -462,7 +483,11 @@ let
         [
           "d ${ic.workingDir} 0755 ${cfg.user} ${cfg.group} -"
           "d ${ic.dataDir} 0755 ${cfg.user} ${cfg.group} -"
-          "d ${ic.dataDir}/groups 0755 ${cfg.user} ${cfg.group} -"
+          # NB: no hardcoded "<dataDir>/groups" rule. globalAgents' parent is
+          # derived from its actual target below, so a non-default target
+          # still gets its parent created and there is a single source of
+          # truth. The old hardcoded rule also silently masked a missing
+          # globalAgents entry in the derived parent list.
         ]
         ++ lib.mapAttrsToList (
           dst: src: "C ${ic.dataDir}/${dst} 0644 ${cfg.user} ${cfg.group} - ${toString src}"
@@ -471,8 +496,22 @@ let
         # root-owned 0755. Pre-create every parent directory of a read-only
         # file as the service user instead, so the agent can still add
         # siblings next to a governance file it may not modify.
-        ++ map (d: "d ${ic.dataDir}/${d} 0755 ${cfg.user} ${cfg.group} -") (
-          lib.unique (lib.flatten (lib.mapAttrsToList (dst: _: parentsOf dst) ic.readOnlyFiles))
+        #
+        # globalAgents is included here because it is bound separately from
+        # readOnlyFiles (see service.bindMounts) and would otherwise be missed:
+        # without this, <dataDir>/groups ends up root-owned and the agent
+        # cannot create bot/chat-scope AGENTS.md next to it.
+        ++ map (
+          d: "d ${ic.dataDir}/${d} 0755 ${cfg.user} ${cfg.group} -"
+        ) (
+          lib.unique (
+            lib.flatten (
+              (lib.mapAttrsToList (dst: _: parentsOf dst) ic.readOnlyFiles)
+              ++ lib.optional (ic.globalAgents != null) (
+                parentsOf (lib.removePrefix "${ic.dataDir}/" globalAgentsTarget)
+              )
+            )
+          )
         );
 
       networking.firewall.allowedTCPPorts = ic.firewallTCPPorts;
