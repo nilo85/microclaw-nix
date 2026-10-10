@@ -29,6 +29,17 @@
   seedDirs covers the per-user layer and the per-chat SOUL.md / USER.md stay
   writable. Only operator-owned governance is pinned to Nix.
 
+  Governance/seed/state SOURCE paths are referenced with `"${path}"`
+  interpolation, NEVER `toString path`. `toString` drops the Nix string
+  context, so a store path rendered into the unit becomes inert text: the unit
+  records no dependency on it, `nix-collect-garbage` may delete it, and the
+  unit then fails at mount-namespace setup because a BindReadOnlyPaths source
+  is gone (the 2026-10-06 gunvor/bertil crash-loop). Interpolation keeps the
+  context and makes Nix copy a flake path into its own store path, pinning it
+  for the life of the closure. Secret FILE paths deliberately stay `toString`:
+  they are runtime files (e.g. /run/secrets/...) that must NOT be copied into
+  the world-readable store.
+
   The mutable config is reseeded from the Nix render on EVERY start, then
   secrets are injected from FILES (`secrets = [ { key = "<yq path>"; file =
   <path>; } ]`), keeping this module agnostic about the secret manager
@@ -275,9 +286,9 @@ let
       ) ic.secrets;
       seedDirCmds = lib.concatMapStringsSep "\n" (
         d: ''
-          if [ -d ${lib.escapeShellArg (toString d.src)} ]; then
+          if [ -d ${lib.escapeShellArg "${d.src}"} ]; then
             mkdir -p ${lib.escapeShellArg d.dst}
-            cp -rn ${lib.escapeShellArg (toString d.src)}/. ${lib.escapeShellArg d.dst}/ 2>/dev/null || true
+            cp -rn ${lib.escapeShellArg "${d.src}"}/. ${lib.escapeShellArg d.dst}/ 2>/dev/null || true
             # Store modes are read-only; make the copy writable so governed
             # learning (agent self-editing personas/skills) keeps working.
             chmod -R u+rwX ${lib.escapeShellArg d.dst}
@@ -345,7 +356,7 @@ let
           # Fail BEFORE writing anything: empty secret = broken forever.
           ${secretEmptyCheck}
           ${lib.optionalString (ic.globalAgents != null) ''
-            if [ ! -s ${lib.escapeShellArg (toString ic.globalAgents)} ]; then
+            if [ ! -s ${lib.escapeShellArg "${ic.globalAgents}"} ]; then
               echo "${unit}: globalAgents is empty; the global governance scope must not be blank" >&2
               exit 1
             fi
@@ -356,7 +367,7 @@ let
             # instead of the reviewed governance file. Fail loudly rather
             # than run on the wrong policy.
             _ga_target=${lib.escapeShellArg globalAgentsTarget}
-            if [ -e "$_ga_target" ] && ! cmp -s "$_ga_target" ${lib.escapeShellArg (toString ic.globalAgents)}; then
+            if [ -e "$_ga_target" ] && ! cmp -s "$_ga_target" ${lib.escapeShellArg "${ic.globalAgents}"}; then
               echo "${unit}: globalAgents target has content differing from the Nix source;" >&2
               echo "${unit}: the read-only bind is not in effect, so the agent would read stale governance." >&2
               exit 1
@@ -367,7 +378,7 @@ let
               lib.mapAttrsToList (
                 dst: src:
                   ''
-                  if [ ! -s ${lib.escapeShellArg (toString src)} ]; then
+                  if [ ! -s ${lib.escapeShellArg "${src}"} ]; then
                     echo "${unit}: read-only governance file ${dst} is empty" >&2
                     exit 1
                   fi
@@ -455,10 +466,10 @@ let
         // lib.optionalAttrs ((ic.globalAgents != null) || (ic.readOnlyFiles != { })) {
           BindReadOnlyPaths =
             lib.optionals (ic.globalAgents != null) [
-              "${toString ic.globalAgents}:${globalAgentsTarget}"
+              "${ic.globalAgents}:${globalAgentsTarget}"
             ]
             ++ lib.mapAttrsToList (
-              dst: src: "${toString src}:${ic.dataDir}/${dst}"
+              dst: src: "${src}:${ic.dataDir}/${dst}"
             ) ic.readOnlyFiles;
         };
 
@@ -494,7 +505,7 @@ let
           # globalAgents entry in the derived parent list.
         ]
         ++ lib.mapAttrsToList (
-          dst: src: "C ${ic.dataDir}/${dst} 0644 ${cfg.user} ${cfg.group} - ${toString src}"
+          dst: src: "C ${ic.dataDir}/${dst} 0644 ${cfg.user} ${cfg.group} - ${src}"
         ) ic.stateFiles
         # systemd creates missing bind-mount destinations itself, but as
         # root-owned 0755. Pre-create every parent directory of a read-only

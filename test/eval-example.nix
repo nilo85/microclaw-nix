@@ -45,10 +45,10 @@ in
       # Deliberately NOT the same paths as readOnlyFiles: a path may be one
       # or the other, never both (enforced by a per-instance assertion).
       stateFiles = {
-        "groups/telegram/SOUL.md" = toString ./fixtures/household.md;
+        "groups/telegram/SOUL.md" = ./fixtures/household.md;
       };
       readOnlyFiles = {
-        "groups/telegram/AGENTS.md" = toString ./fixtures/household.md;
+        "groups/telegram/AGENTS.md" = ./fixtures/household.md;
       };
       disabledSkills = [ "xlsx" "pptx" ];
       serviceAfter = [ "llama-swap.service" ];
@@ -94,22 +94,25 @@ in
       message = "instance not merged";
     }
     {
+      # GC-safety: every bind source must carry Nix string context. `toString`
+      # of a path drops context, so the unit records no dependency, GC deletes
+      # the store path, and the unit crash-loops at mount-namespace setup.
       assertion =
         builtins.length (svc.serviceConfig.BindReadOnlyPaths or [ ]) == 2
-        && lib.all (b: builtins.match ".*/fixtures/.*:/var/lib/microclaw-alice/.*" b != null) (svc.serviceConfig.BindReadOnlyPaths or [ ]);
-      message = "expected exactly globalAgents + readOnlyFiles binds, all store-path sourced: ${toString (svc.serviceConfig.BindReadOnlyPaths or [ ])}";
+        && lib.all (b: builtins.hasContext b) (svc.serviceConfig.BindReadOnlyPaths or [ ]);
+      message = "every BindReadOnlyPaths source must be an interpolated store path (String context) so GC cannot delete it; got: ${toString (svc.serviceConfig.BindReadOnlyPaths or [ ])}";
     }
     {
-      assertion = lib.elem "${toString globalAgentsFile}:/var/lib/microclaw-alice/groups/AGENTS.md" (svc.serviceConfig.BindReadOnlyPaths or [ ]);
+      assertion = lib.elem "${globalAgentsFile}:/var/lib/microclaw-alice/groups/AGENTS.md" (svc.serviceConfig.BindReadOnlyPaths or [ ]);
       message = "globalAgents bind missing or wrong";
     }
     {
-      assertion = lib.elem "${toString householdFile}:/var/lib/microclaw-alice/groups/telegram/AGENTS.md" (svc.serviceConfig.BindReadOnlyPaths or [ ]);
+      assertion = lib.elem "${householdFile}:/var/lib/microclaw-alice/groups/telegram/AGENTS.md" (svc.serviceConfig.BindReadOnlyPaths or [ ]);
       message = "readOnlyFiles bind missing or wrong";
     }
     {
-      assertion = lib.any (l: lib.hasPrefix "C /var/lib/microclaw-alice/groups/telegram/SOUL.md" l) config.systemd.tmpfiles.rules;
-      message = "tmpfiles C seed rule missing";
+      assertion = lib.any (l: lib.hasPrefix "C /var/lib/microclaw-alice/groups/telegram/SOUL.md" l && builtins.hasContext l) config.systemd.tmpfiles.rules;
+      message = "tmpfiles C seed rule missing or its source lost String context (GC-unsafe)";
     }
     {
       # systemd would create the bind destination itself, but root-owned; the
